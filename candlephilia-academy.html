@@ -312,7 +312,7 @@ tr.odd{background:#FFF5D6}
         <button onclick="showScreen('admin-screen')">🔐 Instructor Access</button>
       </div>
     </div>
-    <div class="demo-hint">Demo: ada@example.com · temi@example.com</div>
+    <div class="demo-hint">Enter your registered email to sign in</div>
   </div>
 </div>
 
@@ -455,13 +455,17 @@ const ADMIN_PASSWORD = "candlephilia2026";
 const CRITERIA = ["Participation","Assignment","Engagement","Punctuality"];
 
 // ── STATE ─────────────────────────────────────────────────────────────
-let students = [
-  {email:"ada@example.com",name:"Ada Okafor"},
-  {email:"temi@example.com",name:"Temi Adeyemi"},
-  {email:"blessing@example.com",name:"Blessing Nwosu"},
-  {email:"grace@example.com",name:"Grace Musa"},
-  {email:"chiamaka@example.com",name:"Chiamaka Eze"},
-];
+// GOOGLE SHEETS API
+const SHEET_URL = "https://script.google.com/macros/s/AKfycbxa7Ms6tEqc0OgK0zWA1GOQdGwlDRHSTVpemtN0LP0phW2fgAa9z0HGcHELeIrdHsMu/exec";
+async function sheetAPI(params){
+  try{
+    const url=SHEET_URL+"?"+new URLSearchParams(params).toString();
+    const res=await fetch(url);
+    return await res.json();
+  }catch(e){console.error("Sheet API error:",e);return null;}
+}
+
+let students = [];
 let attendance = {};
 let scores = {};
 let feedbackData = {};
@@ -470,6 +474,14 @@ let activeDay = null;
 let scoringDay = 1;
 let feedbackSent = {};
 let selectedRating = 0;
+
+async function loadStudents(){
+  const data = await sheetAPI({action:"getStudents"});
+  if(data && data.students && data.students.length > 0){
+    students = data.students;
+  }
+}
+window.addEventListener("load", ()=>{ loadStudents(); });
 
 // ── HELPERS ───────────────────────────────────────────────────────────
 function todayStr(){
@@ -499,11 +511,13 @@ function showScreen(id){
 }
 
 // ── SIGN IN ───────────────────────────────────────────────────────────
-function doSignIn(){
+async function doSignIn(){
   const email=document.getElementById("signin-email").value.trim().toLowerCase();
-  const found=students.find(s=>s.email.toLowerCase()===email);
   const errEl=document.getElementById("signin-error");
   const inEl=document.getElementById("signin-email");
+  showToast("Verifying...");
+  await loadStudents();
+  const found=students.find(s=>s.email.toLowerCase()===email);
   if(!found){
     errEl.textContent="Email not registered. Please contact your instructor.";
     errEl.classList.remove("hidden");inEl.classList.add("error");return;
@@ -517,6 +531,7 @@ function doSignIn(){
     if(!attendance[found.email])attendance[found.email]={};
     const now=new Date().toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit"});
     attendance[found.email][dayEntry.day]=now;
+    sheetAPI({action:"markAttendance",email:found.email,name:found.name,day:dayEntry.day,time:now});
     setTimeout(()=>showToast(`✅ Attendance marked — Day ${dayEntry.day}`),500);
   }
   // Find first unlocked day
@@ -662,6 +677,7 @@ function submitFeedback(){
   if(!topic||!note){showToast("Please fill in all fields.");return;}
   const key=`${currentStudent.email}-${activeDay}-${Date.now()}`;
   feedbackData[key]={studentName:currentStudent.name,email:currentStudent.email,day:activeDay,topic,note,rating:selectedRating};
+  sheetAPI({action:"saveFeedback",email:currentStudent.email,name:currentStudent.name,day:activeDay,topic,note,rating:selectedRating});
   feedbackSent[activeDay]=true;selectedRating=0;
   renderFeedbackTab();showToast("💬 Feedback sent!");
 }
@@ -803,6 +819,18 @@ function saveScores(){
 
 function renderAdminRegister(){
   let html=`<h2 class="section-title">Registered Students</h2>
+
+  <!-- NEW BATCH BUTTON -->
+  <div style="background:linear-gradient(135deg,#1A0F00,#3D1F00);border-radius:14px;padding:20px;margin-bottom:24px;border:1px solid rgba(200,134,10,0.3)">
+    <div style="color:var(--accent);font-family:'Cinzel',serif;font-size:15px;font-weight:600;margin-bottom:6px">🔄 Start New Batch</div>
+    <p style="color:#C8A96A;font-size:13px;margin:0 0 14px;line-height:1.6">This will clear ALL attendance, scores, and feedback. Student list stays until you delete manually. Use this at the start of every new batch.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <input id="new-batch-name" placeholder="Batch name e.g. Batch D" style="flex:1;padding:10px 13px;border-radius:8px;border:1px solid rgba(200,134,10,0.4);background:rgba(26,15,0,0.6);color:var(--cream);font-size:14px;font-family:inherit;outline:none;min-width:160px"/>
+      <button onclick="startNewBatch()" style="padding:10px 20px;border-radius:8px;border:none;background:var(--gold);color:var(--dark);font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap">Start New Batch</button>
+    </div>
+  </div>
+
+  <!-- ADD STUDENT -->
   <div class="student-reg-card">
     <h3 style="color:var(--text);margin:0 0 16px;font-size:16px">Add New Student</h3>
     <label class="field-label">Full Name</label>
@@ -811,13 +839,20 @@ function renderAdminRegister(){
     <input id="new-email" type="email" class="field-input" placeholder="student@email.com" style="background:#FFFBF0;color:var(--text);border:1px solid var(--border);margin-bottom:16px"/>
     <button class="primary-btn" onclick="registerStudent()">Register Student</button>
   </div>
-  ${students.map(s=>`
+
+  <!-- STUDENT LIST -->
+  <h3 style="color:var(--text);font-size:15px;margin:0 0 12px;font-family:'Cinzel',serif">${students.length} Registered Students</h3>
+  ${students.map((s,i)=>`
     <div class="student-list-card">
       <div><div class="student-name">${s.name}</div><div class="student-email">${s.email}</div></div>
-      <div class="student-days">${daysAttended(s.email)}/${SCHEDULE.length} days</div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <div class="student-days">${daysAttended(s.email)}/${SCHEDULE.length} days</div>
+        <button onclick="deleteStudent('${s.email}')" style="padding:6px 12px;border-radius:8px;border:1px solid #FC8181;background:transparent;color:#FC8181;font-size:12px;cursor:pointer;font-family:inherit;font-weight:600">Remove</button>
+      </div>
     </div>`).join("")}`;
   document.getElementById("atab-register").innerHTML=html;
 }
+
 function registerStudent(){
   const name=document.getElementById("new-name").value.trim();
   const email=document.getElementById("new-email").value.trim().toLowerCase();
@@ -826,6 +861,39 @@ function registerStudent(){
   students.push({name,email});
   showToast("✅ Student registered!");
   renderAdminRegister();
+}
+
+async function deleteStudent(email){
+  if(!confirm(`Remove this student? This cannot be undone.`))return;
+  showToast("Removing...");
+  await sheetAPI({action:"removeStudent",email});
+  students=students.filter(s=>s.email!==email);
+  delete attendance[email];
+  delete scores[email];
+  showToast("🗑️ Student removed.");
+  renderAdminRegister();
+  renderAdminDashboard();
+}
+
+function startNewBatch(){
+  const batchName=document.getElementById("new-batch-name").value.trim();
+  if(!batchName){showToast("Please enter a batch name first.");return;}
+  if(!confirm(`Start "${batchName}"? This will clear ALL attendance, scores and feedback. Student list will remain.`))return;
+  // Clear all data
+  attendance={};
+  scores={};
+  feedbackData={};
+  feedbackSent={};
+  // Update batch name in header
+  document.querySelectorAll(".header-sub").forEach(el=>{
+    if(el.textContent.includes("Candle Academy"))el.textContent=`Candle Academy · ${batchName}`;
+  });
+  document.querySelectorAll(".logo-sub").forEach(el=>{
+    if(el.textContent.includes("Candle Academy"))el.textContent=`Candle Academy · ${batchName} · 2026`;
+  });
+  showToast(`🔥 ${batchName} started! All records cleared.`);
+  renderAdminRegister();
+  renderAdminDashboard();
 }
 </script>
 </body>
